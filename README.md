@@ -42,7 +42,8 @@ OpenFlux/
 ├── network/                    # Checksums, packet parsing
 ├── utils/                      # Logging
 ├── ios-app/                    # SwiftUI iOS client (XcodeGen), links liboflux.a
-├── build_ios.sh                # Build the iOS static library (liboflux.a)
+├── core/                       # OpenFlux core (submodule): liboflux.a is built from its mobile/ios
+├── build_ios.sh                # Build the iOS static library (liboflux.a) from core/
 ├── build_ios_app.sh            # Build + archive + export the iOS app IPA
 └── build_android.sh            # Build the Android client binary
 ```
@@ -60,8 +61,13 @@ export ANDROID_NDK_HOME=<your Android NDK path>
 ./build_android.sh
 ```
 
-## Build for iOS (client binary)
+## Build for iOS (client library)
+The iOS library comes from the OpenFlux core in the `core/` submodule
+(`core/mobile/ios`): the same code the Android and desktop clients run, so the
+app speaks the Session, falls back to classic nodes, and reads links exactly as
+they do.
 ```bash
+git submodule update --init core
 export XCODE_PATH="<your Xcode.app path>" # optional, defaults to /Applications/Xcode.app
 ./build_ios.sh
 ```

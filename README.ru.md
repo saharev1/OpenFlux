@@ -42,7 +42,8 @@ OpenFlux/
 ├── network/                    # Контрольные суммы, разбор пакетов
 ├── utils/                      # Логирование
 ├── ios-app/                    # iOS-клиент на SwiftUI (XcodeGen), линкует liboflux.a
-├── build_ios.sh                # Сборка статической библиотеки iOS (liboflux.a)
+├── core/                       # Ядро OpenFlux (сабмодуль): liboflux.a собирается из его mobile/ios
+├── build_ios.sh                # Сборка статической библиотеки iOS (liboflux.a) из core/
 ├── build_ios_app.sh            # Сборка + архив + экспорт IPA приложения iOS
 └── build_android.sh            # Сборка клиентского бинарника Android
 ```
@@ -60,8 +61,13 @@ export ANDROID_NDK_HOME=<путь до вашего Android NDK>
 ./build_android.sh
 ```
 
-## Сборка для iOS (клиентский бинарник)
+## Сборка для iOS (клиентская библиотека)
+Библиотека iOS собирается из ядра OpenFlux в сабмодуле `core/`
+(`core/mobile/ios`) — того же кода, что у Android и десктопа, поэтому
+приложение говорит на Session, откатывается на классические ноды и читает
+ссылки так же, как они.
 ```bash
+git submodule update --init core
 export XCODE_PATH="<путь до вашего Xcode.app>" # опционально, по умолчанию /Applications/Xcode.app
 ./build_ios.sh
 ```

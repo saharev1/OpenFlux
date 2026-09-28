@@ -10,6 +10,11 @@ SOCKS5 tunnel over the Yandex.Docs transport on `127.0.0.1:1080`.
 - `ExportOptions.plist` — App Store export options (team 8GQH8GQ252, automatic signing).
 
 ## Go bridge API (liboflux.h)
+The library is the OpenFlux core's `mobile/ios` package, built from the
+`../core` submodule by `../build_ios.sh`; the full API is described in
+`../core/ios-app/README.md`. A client with a secret runs the Session and falls
+back to the classic layering for a node that does not answer it;
+`OpenFluxMode()` says which one is in use.
 - `OpenFluxStartClient(transportType, url, socksAddr, maxToken, maxUid)` — start the client (returns 0 on success).
 - `OpenFluxStop()` — stop transport + SOCKS5 listener.
 - `OpenFluxIsRunning()` / `OpenFluxIsConnected()` — state.
@@ -18,6 +23,7 @@ SOCKS5 tunnel over the Yandex.Docs transport on `127.0.0.1:1080`.
 ## Build + archive + export (one command)
 From the repo root:
 ```bash
+git submodule update --init core
 ./build_ios_app.sh
 ```
 Produces `ios-app/build/export/OpenFlux.ipa`, distribution-signed for the App Store.

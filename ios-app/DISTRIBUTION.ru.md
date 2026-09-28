@@ -10,6 +10,8 @@
    `OpenFluxStop`, `OpenFluxIsRunning`, `OpenFluxIsConnected`,
    `OpenFluxStatsJSON`, `OpenFluxReadLog`, `OpenFluxFreeString`.
    Сборка: `../build_ios.sh` → `../output/ios/liboflux.a` (+ авто-заголовок `liboflux.h`).
+   Теперь этот слой — пакет `mobile/ios` ядра OpenFlux из сабмодуля `../core`,
+   а не копия в корне репозитория: тот же код, что у Android и десктопа.
 2. **iOS-приложение (SwiftUI, XcodeGen).** Экран с полем Yandex.Docs URL,
    Start/Stop, индикатор состояния, живой лог и кнопка Test (проверяет тоннель
    запросом через локальный SOCKS5 `127.0.0.1:1080`). Линкует `liboflux.a`.
