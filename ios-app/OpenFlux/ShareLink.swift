@@ -133,18 +133,49 @@ enum ShareImporter {
     }
 }
 
+/// Что видит пользователь для каждой причины, по которой ядро не приняло
+/// ссылку (share.Code* в ядре). Причину определяет ядро, слова — приложения.
+enum ShareLinkMessages {
+    static func text(code: String, param: String, detail: String) -> String {
+        switch code {
+        case "not_link": return "Это не ссылка openflux://"
+        case "unsupported_version": return "Неподдерживаемая версия ссылки, обновите OpenFlux"
+        case "case_changed": return "Буквы в ссылке поменяли регистр по дороге: скопируйте её ещё раз"
+        case "damaged": return "Ссылка повреждена или обрезана: скопируйте её целиком ещё раз"
+        case "too_large": return "Ссылка слишком большая"
+        case "bad_payload": return "Ссылка повреждена: внутри не настройки OpenFlux"
+        case "bad_config": return "Не удалось собрать ссылку из профиля"
+        case "no_transports": return "В ссылке нет транспортов"
+        case "several_need_session": return "Несколько транспортов требуют режима Session"
+        case "session_secret": return "Для режима Session нужен ключ не короче \(param) символов"
+        case "short_secret": return "Ключ должен быть не короче \(param) символов"
+        case "unknown_codec": return "Неизвестный кодек «\(param)»"
+        case "not_shareable": return "\(param == "oneme" ? "MAX" : param) нельзя передать ссылкой: токен привязан к аккаунту"
+        case "unknown_transport": return "Неизвестный транспорт «\(param)»: возможно, нужно обновить OpenFlux"
+        case "direct_no_dial": return "У direct нет адреса ноды"
+        case "direct_needs_session": return "Direct работает только в режиме Session"
+        default: return detail.isEmpty ? "Не удалось обработать ссылку" : "Не удалось обработать ссылку: \(detail)"
+        }
+    }
+}
+
 enum ShareLink {
     private struct Result: Decodable {
         let error: String?
+        let code: String?
+        let param: String?
         let config: ShareConfig?
         let link: String?
     }
 
+    /// Any case: a link whose letters changed case on the way still goes to
+    /// the core, which says so.
     static func looksLikeLink(_ s: String) -> Bool {
-        s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("openflux://")
+        s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("openflux://")
     }
 
-    /// Returns the parsed config, or the error text the Go validator produced.
+    /// Returns the parsed config, or the user's words for why the core
+    /// refused it.
     static func decode(_ link: String) -> (config: ShareConfig?, error: String?) {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let c = trimmed.withCString({ OpenFluxShareDecode(UnsafeMutablePointer(mutating: $0)) })
@@ -154,12 +185,15 @@ enum ShareLink {
         guard let data = json.data(using: .utf8),
               let r = try? JSONDecoder().decode(Result.self, from: data)
         else { return (nil, "не разобрать ответ ядра") }
-        if let e = r.error, !e.isEmpty { return (nil, e) }
+        if let e = r.error, !e.isEmpty {
+            return (nil, ShareLinkMessages.text(code: r.code ?? "", param: r.param ?? "", detail: e))
+        }
         return (r.config, nil)
     }
 
-    /// Builds a link from a profile. Validation happens in Go, so an invalid
-    /// combination never leaves the app as a broken link.
+    /// Builds a link from a profile. The core checks it and names the
+    /// encryption context, so the link is the one every client makes and an
+    /// invalid combination never leaves the app.
     static func encode(profile p: Profile) -> String? {
         var transports: [[String: Any]] = []
         var cfg: [String: Any] = ["name": p.name]
@@ -176,7 +210,6 @@ enum ShareLink {
             transports.append(["type": "direct", "dial": dialOrURL(p)])
             cfg["negotiate"] = true          // стандарт требует для direct
             cfg["secret"] = secret
-            cfg["context"] = "http://#"  // как pickSessionContext: узел без документа
         default:
             // ВСЕ документы профиля, а не только первый: мультиплекс у нас
             // выражается списком через запятую, а в стандарте — несколькими
@@ -184,22 +217,21 @@ enum ShareLink {
             let urls = p.url.split(separator: ",")
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-            guard let first = urls.first else { return nil }
+            guard !urls.isEmpty else { return nil }
+            // Priorities as the node wizard and the other apps give them:
+            // documents first, the direct channel as the backup.
             for u in urls {
-                transports.append(["type": standardType(p.transportKind), "url": u])
+                transports.append(["type": standardType(p.transportKind), "url": u, "priority": 100])
             }
-            let url = first
             if !secret.isEmpty {
                 cfg["secret"] = secret
-                cfg["context"] = url
             }
             // Прямой канал профиля едет вторым носителем — так принимающая
             // сторона получает и способ пройти капчу, а не только документ.
             if !dial.isEmpty, !directSecret.isEmpty, secret.isEmpty || secret == directSecret {
-                transports.append(["type": "direct", "dial": dial])
+                transports.append(["type": "direct", "dial": dial, "priority": 50])
                 cfg["negotiate"] = true
                 cfg["secret"] = directSecret
-                cfg["context"] = "http://#"  // как pickSessionContext: узел без документа
             }
         }
 
