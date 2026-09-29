@@ -33,7 +33,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    static let bypassRoutes: [NEIPv4Route] = {
+    /// Диапазоны Яндекса. Исключаем из туннеля ТОЛЬКО для yandex-носителя без
+    /// direct-канала — анти-петля его WebSocket. Для профиля с direct-узлом
+    /// (session) их исключать НЕЛЬЗЯ: тогда WebView капчи «за узел» уйдёт мимо
+    /// туннеля с IP клиента, и решённые куки узлу не подойдут (spravka по IP).
+    static let yandexBypassRoutes: [NEIPv4Route] = {
         let cidrs: [(String, String)] = [
             ("5.45.192.0", "255.255.192.0"),
             ("5.255.192.0", "255.255.192.0"),
@@ -48,12 +52,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             ("100.43.64.0", "255.255.224.0"),
             ("178.154.128.0", "255.255.128.0"),
             ("213.180.192.0", "255.255.224.0"),
-            // DoT DNS resolvers used by the Go client.
-            ("8.8.8.8", "255.255.255.255"),
-            ("1.1.1.1", "255.255.255.255"),
         ]
         return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
     }()
+
+    /// DoT-резолверы — исключаем всегда, чтобы DNS-over-TLS не зациклился.
+    static let dotBypassRoutes: [NEIPv4Route] = [
+        NEIPv4Route(destinationAddress: "8.8.8.8", subnetMask: "255.255.255.255"),
+        NEIPv4Route(destinationAddress: "1.1.1.1", subnetMask: "255.255.255.255"),
+    ]
 
     /// GeoIP split tunneling: routes for the RU address set that must bypass the
     /// exit node (go direct). Loaded lazily from the bundled ru-cidr.txt. Adding
@@ -112,6 +119,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let conf = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
         let transport = (conf["transport"] as? String) ?? "yandex"
         let url = (conf["url"] as? String) ?? ""
+        // Адрес direct-канала узла (host:port) для session-профиля (direct+doc).
+        // Его наличие означает: рабочий носитель — direct, значит Яндекс должен
+        // идти ЧЕРЕЗ туннель (для капчи «за узел»), а IP узла — мимо.
+        let nodeAddr = ((conf["nodeAddr"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let maxToken = (conf["maxToken"] as? String) ?? ""
         let maxUid = (conf["maxUid"] as? String) ?? ""
         let dnsSpec = (conf["dns"] as? String) ?? ""
@@ -175,22 +186,32 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // туннеля, поэтому проверка проходила, а на телефоне всё вставало.
         var nodeRoutes: [NEIPv4Route] = []
         var nodeHostForDNS = ""
-        if transport == "direct" {
-            let hostPart = url.split(separator: ":").first.map(String.init) ?? url
+        func excludeNode(_ hostPort: String) {
+            let hostPart = hostPort.split(separator: ":").first.map(String.init) ?? hostPort
             let host = hostPart.trimmingCharacters(in: .whitespaces)
-            if !host.isEmpty {
-                if Self.isIPv4(host) {
-                    nodeRoutes.append(NEIPv4Route(destinationAddress: host,
-                                                  subnetMask: "255.255.255.255"))
-                } else {
-                    // Имя, а не адрес: пустим его через тот же GeoSite-путь —
-                    // маршрут добавится по DNS-ответу.
-                    nodeHostForDNS = host
-                }
+            guard !host.isEmpty else { return }
+            if Self.isIPv4(host) {
+                nodeRoutes.append(NEIPv4Route(destinationAddress: host, subnetMask: "255.255.255.255"))
+            } else {
+                // Имя, а не адрес: пустим его через тот же GeoSite-путь —
+                // маршрут добавится по DNS-ответу.
+                nodeHostForDNS = host
             }
         }
+        if transport == "direct" { excludeNode(url) }
+        // Session-профиль (direct+doc): адрес узла тоже мимо туннеля.
+        if !nodeAddr.isEmpty { excludeNode(nodeAddr) }
 
-        self.baseExcluded = Self.bypassRoutes + nodeRoutes + (splitRU ? Self.ruDirectRoutes : [])
+        // Рабочий носитель — yandex-семейство ТОЛЬКО если это чистый yandex/volga/
+        // boards без direct-канала. Если есть nodeAddr (session c direct), трафик
+        // идёт через direct, и Яндекс надо пускать В туннель (капча «за узел»).
+        let isYandexType = (transport == "yandex" || transport == "volga" || transport == "boards")
+        let yandexFamily = isYandexType && nodeAddr.isEmpty
+
+        self.baseExcluded = Self.dotBypassRoutes
+            + (yandexFamily ? Self.yandexBypassRoutes : [])
+            + nodeRoutes
+            + (splitRU ? Self.ruDirectRoutes : [])
         ipv4.excludedRoutes = self.baseExcluded
         settings.ipv4Settings = ipv4
         settings.mtu = 1500
@@ -212,7 +233,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // в туннель. HTML ещё мог прийти через жёсткий список IP-диапазонов
         // ниже, но её скрипты с yastatic.net — уже нет, и WebView показывал
         // белый лист. Домены, а не IP: CDN меняет адреса, а имена стабильны.
-        var geoLines: [String] = [Self.alwaysDirectHosts]
+        // Captcha/бэкенд-хосты Яндекса — мимо туннеля только для чистого
+        // yandex-носителя. Для session-с-direct они идут В туннель (иначе капча
+        // «за узел» утечёт с IP клиента).
+        var geoLines: [String] = []
+        if yandexFamily { geoLines.append(Self.alwaysDirectHosts) }
         if !nodeHostForDNS.isEmpty { geoLines.append(nodeHostForDNS) }
         if splitRU, let url = Bundle(for: PacketTunnelProvider.self)
             .url(forResource: "geosite-ru", withExtension: "txt"),

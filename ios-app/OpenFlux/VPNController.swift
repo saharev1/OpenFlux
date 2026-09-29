@@ -29,7 +29,7 @@ final class VPNController: ObservableObject {
     func start(transport: String, url: String, maxToken: String, maxUid: String,
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
-               keySlot: String = "", onDemand: Bool = true) {
+               keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "") {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -47,6 +47,9 @@ final class VPNController: ObservableObject {
                 // is persisted with the VPN profile, so it must not hold secrets.
                 "profileID": profileID?.uuidString ?? "",
                 "keySlot": keySlot,   // "direct" = взять ключ прямого канала
+                // Адрес direct-канала узла: сигнал «session c direct» для
+                // маршрутизации (Яндекс в туннель, IP узла мимо).
+                "nodeAddr": nodeAddr,
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"

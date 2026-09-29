@@ -160,7 +160,8 @@ struct ContentView: View {
                       dns: dnsSpec, tunnelUDP: tunnelUDP,
                       split: splitRU ? "ru-direct" : "",
                       directDomains: directDomains.joined,
-                      profileID: p.id, onDemand: autoReconnect)
+                      profileID: p.id, onDemand: autoReconnect,
+                      nodeAddr: p.nodeAddr ?? "")
         }
     }
 
