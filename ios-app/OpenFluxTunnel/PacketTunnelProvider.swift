@@ -132,14 +132,31 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // ключ и молча ронять все пакеты.
         var encryptionKey = ""
         if let idString = conf["profileID"] as? String, let id = UUID(uuidString: idString) {
-            if (conf["keySlot"] as? String) == "direct" {
-                encryptionKey = Secrets.directKey(for: id) ?? ""
-            } else {
-                encryptionKey = Secrets.encryptionKey(for: id) ?? ""
+            do {
+                encryptionKey = try Secrets.tunnelSecret(
+                    for: id, keySlot: (conf["keySlot"] as? String) ?? "")
+            } catch {
+                completionHandler(error)
+                return
             }
+        }
+        let preparedMode = conf["preparedEncryption"] as? String
+        var preparedKeys = ""
+        if preparedMode == "v1",
+           let idString = conf["profileID"] as? String, let id = UUID(uuidString: idString),
+           let bundle = Secrets.tunnelKeys(for: id, keySlot: (conf["keySlot"] as? String) ?? ""),
+           !bundle.isEmpty, !encryptionKey.isEmpty {
+            preparedKeys = bundle
+        } else if preparedMode != "off" || !encryptionKey.isEmpty {
+            completionHandler(NSError(domain: "OpenFlux", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "Открой OpenFlux и подключись заново для подготовки ключей VPN."]))
+            return
         }
         encryptionKey.withCString { k in
             OpenFluxSetEncryption(UnsafeMutablePointer(mutating: k))
+        }
+        preparedKeys.withCString { keys in
+            OpenFluxSetPreparedEncryption(UnsafeMutablePointer(mutating: keys))
         }
 
         // Куки капчи, пройденной с выключенным туннелем. Отдаём ДО старта, чтобы
@@ -245,8 +262,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
             if rc != 0 {
+                let message = rc == 6
+                    ? "Проверь ключ профиля и подключись заново из OpenFlux для подготовки ключей VPN."
+                    : "start failed (\(rc))"
                 completionHandler(NSError(domain: "OpenFlux", code: Int(rc),
-                    userInfo: [NSLocalizedDescriptionKey: "start failed (\(rc))"]))
+                    userInfo: [NSLocalizedDescriptionKey: message]))
                 return
             }
             self.startReadLoop()

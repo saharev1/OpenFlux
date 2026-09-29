@@ -11,6 +11,8 @@ final class VPNController: ObservableObject {
     @Published var active = false
 
     private var manager: NETunnelProviderManager?
+    private var pendingStart: UUID?
+    private var startInProgress = false
     private let extensionBundleId = "com.p1neapplexpress-saharev.openflux.tunnel"
 
     init() {
@@ -30,7 +32,64 @@ final class VPNController: ObservableObject {
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
                keySlot: String = "", onDemand: Bool = true) {
+        guard !startInProgress else { return }
+        startInProgress = true
+        let requestID = UUID()
+        pendingStart = requestID
+        status = "Preparing…"
+        active = true
         Task {
+            defer {
+                startInProgress = false
+                if pendingStart == requestID { pendingStart = nil }
+            }
+            let secret: String
+            do {
+                if let id = profileID {
+                    secret = try Secrets.tunnelSecret(for: id, keySlot: keySlot)
+                } else {
+                    secret = ""
+                }
+                let bundle: String
+                if secret.isEmpty {
+                    bundle = ""
+                } else {
+                    let result = await Task.detached(priority: .userInitiated) { () -> String? in
+                        transport.withCString { tt in
+                            url.withCString { u in
+                                secret.withCString { key in
+                                    guard let out = OpenFluxPreparePacketTunnelKeys(
+                                        UnsafeMutablePointer(mutating: tt),
+                                        UnsafeMutablePointer(mutating: u),
+                                        UnsafeMutablePointer(mutating: key)) else { return nil }
+                                    defer { OpenFluxFreeString(out) }
+                                    return String(cString: out)
+                                }
+                            }
+                        }
+                    }.value
+                    guard let result = result,
+                          let data = result.data(using: .utf8),
+                          let response = try JSONSerialization.jsonObject(with: data) as? [String: String],
+                          let keys = response["keys"], !keys.isEmpty else {
+                        throw NSError(domain: "OpenFlux", code: 6, userInfo: [
+                            NSLocalizedDescriptionKey: "Не удалось подготовить ключи VPN. Проверь ключ профиля."])
+                    }
+                    bundle = keys
+                }
+                // A stop tap during scrypt must not start a VPN after it finishes.
+                guard pendingStart == requestID else { return }
+                if let id = profileID,
+                   !Secrets.setTunnelKeys(bundle, for: id, keySlot: keySlot) {
+                    throw NSError(domain: "OpenFlux", code: 6, userInfo: [
+                        NSLocalizedDescriptionKey: "Не удалось сохранить ключи VPN в Keychain."])
+                }
+            } catch {
+                guard pendingStart == requestID else { return }
+                self.status = "Error: \(error.localizedDescription)"
+                self.active = false
+                return
+            }
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = extensionBundleId
@@ -47,6 +106,7 @@ final class VPNController: ObservableObject {
                 // is persisted with the VPN profile, so it must not hold secrets.
                 "profileID": profileID?.uuidString ?? "",
                 "keySlot": keySlot,   // "direct" = взять ключ прямого канала
+                "preparedEncryption": secret.isEmpty ? "off" : "v1",
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"
@@ -63,14 +123,23 @@ final class VPNController: ObservableObject {
                 try await m.saveToPreferences()
                 try await m.loadFromPreferences()   // required before starting
                 self.manager = m
+                guard pendingStart == requestID else {
+                    m.isOnDemandEnabled = false
+                    m.onDemandRules = []
+                    try await m.saveToPreferences()
+                    m.connection.stopVPNTunnel()
+                    return
+                }
                 try m.connection.startVPNTunnel()
             } catch {
                 self.status = "Error: \(error.localizedDescription)"
+                self.active = false
             }
         }
     }
 
     func stop() {
+        pendingStart = nil
         Task {
             // Disable on-demand first, otherwise iOS would immediately reconnect
             // the tunnel we're trying to stop.
@@ -80,6 +149,7 @@ final class VPNController: ObservableObject {
                 try? await m.loadFromPreferences()
             }
             manager?.connection.stopVPNTunnel()
+            refreshStatus()
         }
     }
 

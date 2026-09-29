@@ -80,6 +80,7 @@ enum Secrets {
     @discardableResult
     static func setDirectKey(_ secret: String, for profileID: UUID) -> Bool {
         let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard setTunnelKeys("", for: profileID, keySlot: "direct") else { return false }
         let q = slotQuery(directKeyService, profileID)
         guard !trimmed.isEmpty else {
             let st = SecItemDelete(q as CFDictionary)
@@ -92,6 +93,56 @@ enum Secrets {
         var add = q
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Distinguish an intentionally absent key from inaccessible Keychain data.
+    /// A locked/failed read must not create an unencrypted VPN configuration.
+    static func tunnelSecret(for profileID: UUID, keySlot: String) throws -> String {
+        var q = keySlot == "direct" ? slotQuery(directKeyService, profileID) : baseQuery(profileID)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(q as CFDictionary, &out)
+        if status == errSecItemNotFound { return "" }
+        guard status == errSecSuccess,
+              let data = out as? Data, let secret = String(data: data, encoding: .utf8) else {
+            throw NSError(domain: "OpenFlux", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "Не удалось прочитать ключ VPN. Разблокируй iPhone и повтори подключение."])
+        }
+        return secret.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Prepared scrypt output is as sensitive as the original secret. Keep the
+    /// document and direct-key slots separate and available for locked reconnects.
+    static func tunnelKeys(for profileID: UUID, keySlot: String) -> String? {
+        let service = keySlot == "direct" ? "openflux.tunnelkeys.direct.v1" : "openflux.tunnelkeys.v1"
+        var q = slotQuery(service, profileID)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    @discardableResult
+    static func setTunnelKeys(_ keys: String, for profileID: UUID, keySlot: String) -> Bool {
+        let service = keySlot == "direct" ? "openflux.tunnelkeys.direct.v1" : "openflux.tunnelkeys.v1"
+        let q = slotQuery(service, profileID)
+        if keys.isEmpty {
+            let status = SecItemDelete(q as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let attrs: [String: Any] = [
+            kSecValueData as String: Data(keys.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(q as CFDictionary, attrs as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        var add = q
+        for (key, value) in attrs { add[key] = value }
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
@@ -139,6 +190,7 @@ enum Secrets {
     static func setEncryptionKey(_ secret: String, for profileID: UUID) -> Bool {
         let trimmed = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return removeEncryptionKey(for: profileID) }
+        guard setTunnelKeys("", for: profileID, keySlot: "") else { return false }
         guard let data = trimmed.data(using: .utf8) else { return false }
 
         let q = baseQuery(profileID)
@@ -160,6 +212,7 @@ enum Secrets {
 
     @discardableResult
     static func removeEncryptionKey(for profileID: UUID) -> Bool {
+        guard setTunnelKeys("", for: profileID, keySlot: "") else { return false }
         let status = SecItemDelete(baseQuery(profileID) as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
