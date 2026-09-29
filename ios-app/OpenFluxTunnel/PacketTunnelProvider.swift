@@ -15,12 +15,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     yandex.ru
     yandex.com
     yandex.net
-    yastatic.net
     captcha-api.yandex.ru
     smartcaptcha.yandexcloud.net
     passport.yandex.ru
     passport.yandex.com
     """
+
+    /// Чистая статика страницы капчи (скрипты/стили) — НЕ привязана к IP.
+    /// Держим её напрямую ВСЕГДА, даже в session-профиле: иначе при слабом
+    /// резолвинге через туннель WebView капчи остаётся белым. Сам challenge
+    /// (captcha-api/smartcaptcha/doc) идёт через туннель ради привязки к IP узла.
+    static let staticDirectHosts = "yastatic.net"
 
     /// Литерал IPv4 или имя хоста — от этого зависит, можно ли добавить
     /// статический /32 или надо ждать DNS-ответа.
@@ -239,7 +244,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Captcha/бэкенд-хосты Яндекса — мимо туннеля только для чистого
         // yandex-носителя. Для session-с-direct они идут В туннель (иначе капча
         // «за узел» утечёт с IP клиента).
-        var geoLines: [String] = []
+        var geoLines: [String] = [Self.staticDirectHosts]   // yastatic.net — всегда напрямую
         if yandexFamily { geoLines.append(Self.alwaysDirectHosts) }
         if !nodeHostForDNS.isEmpty { geoLines.append(nodeHostForDNS) }
         if splitRU, let url = Bundle(for: PacketTunnelProvider.self)
