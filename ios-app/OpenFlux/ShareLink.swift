@@ -109,6 +109,25 @@ enum ShareImporter {
         return out
     }
 
+    /// Negotiate-ссылка -> один session-профиль со всеми носителями. Ключ идёт
+    /// в ОСНОВНОЙ слот (его читает session-старт), а specs (готовый профиль
+    /// {context, transports} от ядра) сохраняются в профиле. Тип берём по
+    /// основному носителю только для иконки/имени.
+    static func buildSession(from cfg: ShareConfig, specs: String) -> Imported {
+        let secret = cfg.secret ?? ""
+        let kind = cfg.primaryKind ?? .yandex
+        let primaryURL = (cfg.primary?.url ?? "").trimmingCharacters(in: .whitespaces)
+        var p = Profile(name: cfg.name ?? kind.title,
+                        transport: kind.rawValue,
+                        url: primaryURL,
+                        nodeAddr: cfg.directDial)
+        p.negotiate = true
+        p.sessionSpecs = specs
+        var out = Imported(profiles: [p], secrets: [:])
+        out.secrets[p.id] = (main: secret, direct: "")   // ключ в ОСНОВНОЙ слот
+        return out
+    }
+
     /// Записывает профили и их секреты. Секреты идут в Keychain, а не в профиль:
     /// сам профиль лежит в UserDefaults открытым текстом.
     @MainActor
@@ -138,24 +157,28 @@ enum ShareLink {
         let error: String?
         let config: ShareConfig?
         let link: String?
+        // Готовый specs-профиль для OpenFluxStartSessionPacketTunnel (все
+        // носители + контекст). Ядро отдаёт его для negotiate-ссылок.
+        let session: String?
     }
 
     static func looksLikeLink(_ s: String) -> Bool {
         s.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("openflux://")
     }
 
-    /// Returns the parsed config, or the error text the Go validator produced.
-    static func decode(_ link: String) -> (config: ShareConfig?, error: String?) {
+    /// Returns the parsed config, the ready session specs (for negotiate links),
+    /// or the error text the Go validator produced.
+    static func decode(_ link: String) -> (config: ShareConfig?, session: String?, error: String?) {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let c = trimmed.withCString({ OpenFluxShareDecode(UnsafeMutablePointer(mutating: $0)) })
-        else { return (nil, "нет ответа от ядра") }
+        else { return (nil, nil, "нет ответа от ядра") }
         let json = String(cString: c)
         OpenFluxFreeString(c)
         guard let data = json.data(using: .utf8),
               let r = try? JSONDecoder().decode(Result.self, from: data)
-        else { return (nil, "не разобрать ответ ядра") }
-        if let e = r.error, !e.isEmpty { return (nil, e) }
-        return (r.config, nil)
+        else { return (nil, nil, "не разобрать ответ ядра") }
+        if let e = r.error, !e.isEmpty { return (nil, nil, e) }
+        return (r.config, r.session, nil)
     }
 
     /// Builds a link from a profile. Validation happens in Go, so an invalid

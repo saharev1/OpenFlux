@@ -17,6 +17,13 @@ struct Profile: Identifiable, Codable, Equatable {
     /// новое обязательное поле молча стёрло бы все сохранённые профили.
     var nodeAddr: String?
 
+    /// Согласованная (Session) сессия из negotiate-ссылки. Опционально ради
+    /// совместимости сохранённых профилей.
+    var negotiate: Bool?
+    /// Готовый specs-профиль ({context, transports}) для
+    /// OpenFluxStartSessionPacketTunnel — как отдаёт OpenFluxShareDecode.
+    var sessionSpecs: String?
+
     var transportKind: TransportKind { TransportKind(rawValue: transport) ?? .yandex }
 
     var isValid: Bool {

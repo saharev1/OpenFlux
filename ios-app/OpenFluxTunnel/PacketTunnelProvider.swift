@@ -123,6 +123,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // Его наличие означает: рабочий носитель — direct, значит Яндекс должен
         // идти ЧЕРЕЗ туннель (для капчи «за узел»), а IP узла — мимо.
         let nodeAddr = ((conf["nodeAddr"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        // specs negotiate-профиля от ядра. Не пусто = session-старт (контекст и
+        // носители внутри), а не классический одиночный.
+        let session = (conf["session"] as? String) ?? ""
         let maxToken = (conf["maxToken"] as? String) ?? ""
         let maxUid = (conf["maxUid"] as? String) ?? ""
         let dnsSpec = (conf["dns"] as? String) ?? ""
@@ -256,15 +259,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(error)
                 return
             }
-            let rc = transport.withCString { tt in
-                url.withCString { u in
-                    maxToken.withCString { tok in
-                        maxUid.withCString { uid in
-                            OpenFluxStartPacketTunnel(
-                                UnsafeMutablePointer(mutating: tt),
-                                UnsafeMutablePointer(mutating: u),
-                                UnsafeMutablePointer(mutating: tok),
-                                UnsafeMutablePointer(mutating: uid))
+            let rc: Int32
+            if !session.isEmpty {
+                // Session-профиль: specs (с контекстом и носителями) + ключ из
+                // основного слота. Контекст берётся из specs, поэтому совпадает
+                // с узлом (в отличие от классического, где он деривится из URL).
+                rc = session.withCString { sp in
+                    encryptionKey.withCString { k in
+                        OpenFluxStartSessionPacketTunnel(
+                            UnsafeMutablePointer(mutating: sp),
+                            UnsafeMutablePointer(mutating: k))
+                    }
+                }
+            } else {
+                rc = transport.withCString { tt in
+                    url.withCString { u in
+                        maxToken.withCString { tok in
+                            maxUid.withCString { uid in
+                                OpenFluxStartPacketTunnel(
+                                    UnsafeMutablePointer(mutating: tt),
+                                    UnsafeMutablePointer(mutating: u),
+                                    UnsafeMutablePointer(mutating: tok),
+                                    UnsafeMutablePointer(mutating: uid))
+                            }
                         }
                     }
                 }

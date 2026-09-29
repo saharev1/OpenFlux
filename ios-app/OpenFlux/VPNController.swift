@@ -29,7 +29,8 @@ final class VPNController: ObservableObject {
     func start(transport: String, url: String, maxToken: String, maxUid: String,
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
-               keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "") {
+               keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "",
+               session: String = "") {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -50,6 +51,9 @@ final class VPNController: ObservableObject {
                 // Адрес direct-канала узла: сигнал «session c direct» для
                 // маршрутизации (Яндекс в туннель, IP узла мимо).
                 "nodeAddr": nodeAddr,
+                // Готовый specs negotiate-профиля ({context,transports}). Не
+                // пусто = звать OpenFluxStartSessionPacketTunnel с этим и ключом.
+                "session": session,
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"

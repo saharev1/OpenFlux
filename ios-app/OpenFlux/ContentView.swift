@@ -161,7 +161,8 @@ struct ContentView: View {
                       split: splitRU ? "ru-direct" : "",
                       directDomains: directDomains.joined,
                       profileID: p.id, onDemand: autoReconnect,
-                      nodeAddr: p.nodeAddr ?? "")
+                      nodeAddr: p.nodeAddr ?? "",
+                      session: p.sessionSpecs ?? "")
         }
     }
 
@@ -862,10 +863,18 @@ struct ProfileEditorView: View {
     private func ingest(_ raw: String) -> Bool {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if ShareLink.looksLikeLink(s) {
-            let (cfg, err) = ShareLink.decode(s)
+            let (cfg, session, err) = ShareLink.decode(s)
             if let cfg = cfg {
-                // Несколько носителей — это несколько профилей; в одну форму
-                // они не помещаются, поэтому заводим их сразу и закрываемся.
+                // Session-ссылка (--negotiate): заводим ОДИН session-профиль
+                // через apply — ключ идёт в ОСНОВНОЙ слот, а specs/контекст
+                // сохраняются (иначе yandex стартует без ключа и с чужим KDF).
+                if cfg.negotiate == true, let many = onImportMany {
+                    many(ShareImporter.buildSession(from: cfg, specs: session ?? ""))
+                    dismiss()
+                    return true
+                }
+                // Несколько носителей — несколько профилей; в одну форму они не
+                // помещаются, заводим сразу и закрываемся.
                 let imported = ShareImporter.build(from: cfg)
                 if imported.profiles.count > 1, let many = onImportMany {
                     many(imported)
