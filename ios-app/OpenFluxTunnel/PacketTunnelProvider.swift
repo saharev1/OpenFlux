@@ -216,8 +216,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let isYandexType = (transport == "yandex" || transport == "volga" || transport == "boards")
         let yandexFamily = isYandexType && nodeAddr.isEmpty
 
-        self.baseExcluded = Self.dotBypassRoutes
-            + (yandexFamily ? Self.yandexBypassRoutes : [])
+        // DoT-резолверы (:853) исключаем ТОЛЬКО для yandex-носителя (ему DNS
+        // нужен ДО туннеля, чтобы зарезолвить сам Яндекс). Для direct/session
+        // пускаем DoT ЧЕРЕЗ туннель: direct дозванивается по фиксированному IP
+        // узла (DNS не нужен), а запрос DoT выйдет с IP узла — где порт 853 не
+        // блокнут. Это чинит «зелёное, но нет соединения» в сетях, режущих 853.
+        self.baseExcluded = (yandexFamily ? Self.dotBypassRoutes + Self.yandexBypassRoutes : [])
             + nodeRoutes
             + (splitRU ? Self.ruDirectRoutes : [])
         ipv4.excludedRoutes = self.baseExcluded
