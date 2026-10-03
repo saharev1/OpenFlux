@@ -63,6 +63,8 @@ struct ContentView: View {
         let url: URL
         /// true — проверка за узел: туннель не гасим, куки отдаём ему.
         var forPeer = false
+        /// Loopback-прокси узла для WebView (проверка за узел идёт с IP узла).
+        var proxy: String? = nil
     }
     @State private var captchaTask: CaptchaTask?
     /// VPN был включён и его выключили ради капчи — значит после передачи кук
@@ -251,7 +253,7 @@ struct ContentView: View {
             .onChange(of: vpn.status) { st in
                 if dcStage == .connecting, st.contains("Connected"), let doc = dcDoc {
                     dcStage = .solving
-                    captchaTask = CaptchaTask(url: doc, forPeer: true)
+                    captchaTask = CaptchaTask(url: doc, forPeer: true, proxy: vpn.remoteCaptchaProxy)
                 }
             }
             .onAppear {
@@ -263,13 +265,13 @@ struct ContentView: View {
                 vpn.logSink = { [weak tunnel] line in tunnel?.appendExternal(line) }
             }
             .sheet(item: $captchaTask) { task in
-                CaptchaView(url: task.url) { header in
+                CaptchaView(url: task.url, onCookies: { header in
                     if task.forPeer {
                         handlePeerCaptchaCookies(header)
                     } else {
                         handleCaptchaCookies(header)
                     }
-                }
+                }, proxy: task.proxy)
             }
             .sheet(isPresented: $showInfo) { InfoView() }
             .sheet(isPresented: $showSettings) {
@@ -378,7 +380,7 @@ struct ContentView: View {
     private var manualPeerCaptcha: some View {
         if vpn.active, remoteCaptchaTarget == nil, let u = yandexDocForPeer {
             Button {
-                captchaTask = CaptchaTask(url: u, forPeer: true)
+                captchaTask = CaptchaTask(url: u, forPeer: true, proxy: vpn.remoteCaptchaProxy)
             } label: {
                 Label("Пройти капчу Яндекса за узел", systemImage: "shield.lefthalf.filled")
                     .frame(maxWidth: .infinity)
@@ -398,7 +400,7 @@ struct ContentView: View {
                 Text("Пройдите её, НЕ отключая туннель: выход пойдёт с адреса узла, и куки подойдут именно ему. Приложение передаст их узлу само.")
                     .font(.caption2).foregroundColor(.secondary)
                 Button {
-                    captchaTask = CaptchaTask(url: u, forPeer: true)
+                    captchaTask = CaptchaTask(url: u, forPeer: true, proxy: vpn.remoteCaptchaProxy)
                 } label: {
                     Label("Пройти за узел", systemImage: "hand.tap")
                         .frame(maxWidth: .infinity)

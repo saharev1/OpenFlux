@@ -103,6 +103,8 @@ final class VPNController: ObservableObject {
     @Published var captchaURL: String?
     /// Проверка в интересах узла: проходить НЕ отключая туннель.
     @Published var remoteCaptchaURL: String?
+    /// Loopback HTTP proxy (host:port) for the «за узел» captcha WebView.
+    @Published var remoteCaptchaProxy: String?
 
     private var logTimer: Timer?
 
@@ -153,6 +155,13 @@ final class VPNController: ObservableObject {
         try? session.sendProviderMessage(msg) { [weak self] data in
             let url = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             Task { @MainActor in self?.remoteCaptchaURL = url.isEmpty ? nil : url }
+        }
+        // Loopback proxy for the «за узел» WebView (routes the page via the exit).
+        if let pmsg = "captchaproxy".data(using: .utf8) {
+            try? session.sendProviderMessage(pmsg) { [weak self] data in
+                let p = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                Task { @MainActor in self?.remoteCaptchaProxy = p.isEmpty ? nil : p }
+            }
         }
     }
 

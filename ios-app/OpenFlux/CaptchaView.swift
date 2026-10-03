@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Network
 
 /// Interactive-captcha solver.
 ///
@@ -18,6 +19,11 @@ struct CaptchaView: View {
     let url: URL
     /// Called with cookies in Cookie-header form ("a=1; b=2").
     let onCookies: (String) -> Void
+    /// Loopback HTTP proxy (host:port) from OpenFluxRemoteCaptchaProxy: for a
+    /// check «за узел» the page MUST leave through the exit's address, so the
+    /// WebView routes through this proxy (iOS 17+). Empty/nil = load directly
+    /// (local captcha, solved from the phone's own address).
+    var proxy: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var status = "Пройдите проверку — куки подхватятся автоматически"
@@ -28,7 +34,7 @@ struct CaptchaView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                CaptchaWebView(url: url, model: model)
+                CaptchaWebView(url: url, model: model, proxy: proxy)
 
                 VStack(spacing: 8) {
                     if let e = model.loadError {
@@ -145,12 +151,27 @@ final class CaptchaWebModel: ObservableObject {
 private struct CaptchaWebView: UIViewRepresentable {
     let url: URL
     let model: CaptchaWebModel
+    var proxy: String? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
         // Default (persistent) store on purpose: a non-persistent one would keep
         // the solved cookies out of reach after the sheet closes.
         cfg.websiteDataStore = .default()
+        // Remote check «за узел»: route the page through the exit's loopback
+        // proxy so it is issued for the NODE's IP (spravka is IP-bound). A
+        // non-persistent store is used so the app-wide default store keeps no
+        // proxy; cookies are still readable from this store before dismiss.
+        // Requires iOS 17 (WKWebsiteDataStore.proxyConfigurations).
+        if #available(iOS 17.0, *), let p = proxy, !p.isEmpty {
+            let hostPort = p.split(separator: ":")
+            if hostPort.count == 2, let port = NWEndpoint.Port(rawValue: UInt16(hostPort[1]) ?? 0) {
+                let endpoint = NWEndpoint.hostPort(host: .init(String(hostPort[0])), port: port)
+                let store = WKWebsiteDataStore.nonPersistent()
+                store.proxyConfigurations = [ProxyConfiguration(httpCONNECTProxy: endpoint)]
+                cfg.websiteDataStore = store
+            }
+        }
         let web = WKWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = context.coordinator
         model.webView = web

@@ -374,6 +374,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             completionHandler?(url.data(using: .utf8) ?? Data())
 
+        case "captchaproxy":
+            // Loopback HTTP proxy for a check «за узел»: the WebView must route
+            // the page through it so it leaves from the node's IP.
+            var addr = ""
+            if let c = OpenFluxRemoteCaptchaProxy() {
+                addr = String(cString: c)
+                OpenFluxFreeString(c)
+            }
+            completionHandler?(addr.data(using: .utf8) ?? Data())
+
         case "captcha":
             var url = ""
             if let c = OpenFluxCaptchaPending() {
