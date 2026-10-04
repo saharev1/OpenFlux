@@ -774,6 +774,26 @@ struct ProfileEditorView: View {
 
     private var transport: TransportKind { TransportKind(rawValue: transportRaw) ?? .yandex }
 
+    /// Один носитель session-профиля для отображения в редакторе.
+    struct SessionCarrier: Hashable {
+        let type: String, priority: Int, target: String
+        var title: String {
+            TransportKind(rawValue: type == "vyandex" ? "volga" : type)?.title ?? type
+        }
+    }
+    /// Разбирает sessionSpecs ({transports:[{type,priority,url|dial}]}) в список
+    /// носителей, отсортированный по приоритету.
+    static func parseSessionCarriers(_ specs: String) -> [SessionCarrier]? {
+        guard let d = specs.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let ts = obj["transports"] as? [[String: Any]] else { return nil }
+        return ts.map { t in
+            SessionCarrier(type: (t["type"] as? String) ?? "?",
+                           priority: (t["priority"] as? Int) ?? 0,
+                           target: (t["url"] as? String) ?? (t["dial"] as? String) ?? "")
+        }.sorted { $0.priority > $1.priority }
+    }
+
     var body: some View {
         NavigationView {
             Form {
@@ -784,6 +804,32 @@ struct ProfileEditorView: View {
                     }
                     if transport == .direct {
                         Text("Прямой TCP до узла: в поле ниже — его host:port, ключ шифрования обязателен. Канал не скрытый: адрес узла виден.")
+                            .font(.caption2).foregroundColor(.secondary)
+                    }
+                }
+
+                if let specs = profile?.sessionSpecs,
+                   let carriers = Self.parseSessionCarriers(specs), !carriers.isEmpty {
+                    Section("Мультитранспорт (session)") {
+                        ForEach(carriers, id: \.self) { c in
+                            HStack(alignment: .firstTextBaseline) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.caption).foregroundColor(.secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(c.title).font(.callout)
+                                    if !c.target.isEmpty {
+                                        Text(c.target)
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1).truncationMode(.middle)
+                                    }
+                                }
+                                Spacer()
+                                Text("prio \(c.priority)")
+                                    .font(.caption2).foregroundColor(.secondary)
+                            }
+                        }
+                        Text("Согласованная сессия: все носители поднимаются вместе, трафик идёт по высшему ЖИВОМУ приоритету (failover). Состав задаётся ссылкой узла.")
                             .font(.caption2).foregroundColor(.secondary)
                     }
                 }
