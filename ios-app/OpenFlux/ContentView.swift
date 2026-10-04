@@ -65,7 +65,13 @@ struct ContentView: View {
         var forPeer = false
         /// Loopback-прокси узла для WebView (проверка за узел идёт с IP узла).
         var proxy: String? = nil
+        /// SOCKS in-app сессии: решаем капчу мимо NE (без лимита 50 МБ).
+        var socksProxy: String? = nil
+        /// true — оживление yandex через in-app сессию (куки шлёт tunnel, не NE).
+        var revive = false
     }
+    private enum ReviveStage { case idle, connecting, solving }
+    @State private var reviveStage: ReviveStage = .idle
     @State private var captchaTask: CaptchaTask?
     /// VPN был включён и его выключили ради капчи — значит после передачи кук
     /// его надо поднять обратно.
@@ -168,6 +174,29 @@ struct ContentView: View {
         }
     }
 
+    /// Оживляет yandex на узле, решая капчу «за узел» в IN-APP сессии (SOCKS в
+    /// процессе приложения), мимо NE и его лимита 50 МБ. Гасит VPN (узел держит
+    /// одного клиента), поднимает in-app сессию; когда узел попросит yandex-капчу
+    /// (tunnel.remoteCaptchaURL), onChange откроет её через SOCKS этой сессии.
+    private func reviveYandexViaApp() {
+        guard let p = store.selected, p.negotiate == true, let specs = p.sessionSpecs else {
+            testHint = "Нужен session-профиль для оживления."
+            return
+        }
+        let key = Secrets.encryptionKey(for: p.id) ?? ""
+        guard key.count >= 16 else { testHint = "У профиля нет ключа шифрования."; return }
+        reviveStage = .connecting
+        testHint = "Поднимаю in-app сессию для капчи (NE выключен)…"
+        vpn.stop()
+        tunnel.stop()
+        // Пауза, чтобы NE отпустил сессию на узле (один клиент на узел), иначе
+        // in-app сессия и NE воюют за «того же клиента».
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            tunnel.startSession(specs: specs, secret: key,
+                                port: (Int(socksPort) ?? 10808) + 7)
+        }
+    }
+
     private func checkAvailability() {
         if vpn.active {
             tunnel.testDirect()
@@ -200,6 +229,20 @@ struct ContentView: View {
                     connectButton
 
                     Text(statusText).font(.headline)
+
+                    if let p = store.selected, p.negotiate == true, p.sessionSpecs != nil {
+                        Button {
+                            reviveYandexViaApp()
+                        } label: {
+                            Label(reviveStage == .idle
+                                  ? "Оживить Яндекс (капча в приложении)"
+                                  : "Поднимаю сессию для капчи…",
+                                  systemImage: "arrow.triangle.2.circlepath")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(reviveStage != .idle)
+                    }
 
                     profilePicker
 
@@ -266,12 +309,26 @@ struct ContentView: View {
             }
             .sheet(item: $captchaTask) { task in
                 CaptchaView(url: task.url, onCookies: { header in
-                    if task.forPeer {
+                    if task.revive {
+                        tunnel.offerCaptchaCookies(header)   // in-app session -> exit
+                        tunnel.stop()
+                        reviveStage = .idle
+                        testHint = "Куки узлу отправлены — Яндекс оживает. Подключайтесь обычным профилем."
+                    } else if task.forPeer {
                         handlePeerCaptchaCookies(header)
                     } else {
                         handleCaptchaCookies(header)
                     }
-                }, proxy: task.proxy)
+                }, proxy: task.proxy, socksProxy: task.socksProxy)
+            }
+            .onChange(of: tunnel.remoteCaptchaURL) { newVal in
+                // In-app revival: the session is up and the exit asked for the
+                // yandex check — open it through the in-app SOCKS (node's IP,
+                // no NE memory cap).
+                guard reviveStage == .connecting, let s = newVal, let u = URL(string: s) else { return }
+                reviveStage = .solving
+                captchaTask = CaptchaTask(url: u, forPeer: true,
+                                          socksProxy: tunnel.socksAddr, revive: true)
             }
             .sheet(isPresented: $showInfo) { InfoView() }
             .sheet(isPresented: $showSettings) {

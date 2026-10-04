@@ -105,6 +105,31 @@ final class TunnelController: ObservableObject {
         startPolling()
     }
 
+    /// Starts a negotiated Session in THIS process (SOCKS5), not the NE. Used to
+    /// solve the «за узел» captcha without the 50 MB NE jetsam cap: the WebView
+    /// routes through this SOCKS, the page leaves from the node's IP, the core's
+    /// captcha machinery (same process) delivers the cookies to the exit.
+    func startSession(specs: String, secret: String, port: Int) {
+        guard !running else { return }
+        let addr = "127.0.0.1:\(port)"
+        socksAddr = addr
+        (Secrets.captchaCookies() ?? "").withCString {
+            OpenFluxSetInitialCookies(UnsafeMutablePointer(mutating: $0))
+        }
+        let rc = specs.withCString { sp in
+            secret.withCString { se in
+                addr.withCString { a in
+                    OpenFluxStartSession(UnsafeMutablePointer(mutating: sp),
+                                         UnsafeMutablePointer(mutating: se),
+                                         UnsafeMutablePointer(mutating: a))
+                }
+            }
+        }
+        appendLog(rc == 0 ? "[app] session started on \(addr)" : "[app] session start failed (code \(rc))")
+        running = OpenFluxIsRunning() != 0
+        startPolling()
+    }
+
     func stop() {
         OpenFluxStop()
         running = false
