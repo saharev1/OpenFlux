@@ -242,6 +242,13 @@ struct ContentView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(reviveStage != .idle)
+
+                        Text(reviveStage == .idle
+                             ? "VPN выключится, откроется капча Яндекса — пройдите её. Потом НЕ закрывайте ~15 сек (куки улетают узлу), затем включите VPN. Нужен iOS 17+."
+                             : "Идёт оживление: решите капчу и НЕ закрывайте ~15 секунд — куки отправляются узлу.")
+                            .font(.caption2).foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
                     }
 
                     profilePicker
