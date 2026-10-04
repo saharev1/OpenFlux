@@ -310,10 +310,16 @@ struct ContentView: View {
             .sheet(item: $captchaTask) { task in
                 CaptchaView(url: task.url, onCookies: { header in
                     if task.revive {
-                        tunnel.offerCaptchaCookies(header)   // in-app session -> exit
-                        tunnel.stop()
-                        reviveStage = .idle
-                        testHint = "Куки узлу отправлены — Яндекс оживает. Подключайтесь обычным профилем."
+                        tunnel.offerCaptchaCookies(header)   // in-app session -> exit (async control frame)
+                        // НЕ гасим сразу: offer летит по сессии асинхронно, узлу
+                        // надо успеть принять куки и переподключить yandex. Держим
+                        // сессию ещё 15с, потом стоп.
+                        testHint = "Куки отправлены узлу — держу сессию 15с, чтобы Яндекс ожил…"
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                            tunnel.stop()
+                            reviveStage = .idle
+                            testHint = "Готово. Яндекс на узле должен ожить — подключайтесь обычным профилем."
+                        }
                     } else if task.forPeer {
                         handlePeerCaptchaCookies(header)
                     } else {
