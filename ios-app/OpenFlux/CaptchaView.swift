@@ -188,6 +188,7 @@ private struct CaptchaWebView: UIViewRepresentable {
             }
         }
         let web = WKWebView(frame: .zero, configuration: cfg)
+        web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
         web.navigationDelegate = context.coordinator
         model.webView = web
         web.load(URLRequest(url: url))

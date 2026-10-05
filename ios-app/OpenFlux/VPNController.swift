@@ -135,7 +135,7 @@ final class VPNController: ObservableObject {
 
     private var activeSession: NETunnelProviderSession? {
         guard let s = manager?.connection as? NETunnelProviderSession,
-              s.status == .connected || s.status == .reasserting
+              s.status == .connected || s.status == .reasserting || s.status == .connecting
         else { return nil }
         return s
     }
@@ -202,7 +202,7 @@ final class VPNController: ObservableObject {
         case .reasserting:   status = "Reasserting…";  active = true
         default:             status = "Disconnected";  active = false
         }
-        if conn.status == .connected || conn.status == .reasserting {
+        if conn.status == .connected || conn.status == .reasserting || conn.status == .connecting {
             startLogPolling()
         } else {
             stopLogPolling()

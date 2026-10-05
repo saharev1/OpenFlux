@@ -194,6 +194,15 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             tunnel.startSession(specs: specs, secret: key,
                                 port: (Int(socksPort) ?? 10808) + 7)
+            guard !tunnel.running else { return }
+            reviveStage = .idle
+            let own = p.url.split(separator: ",").first.map { String($0).trimmingCharacters(in: .whitespaces) }
+            guard let doc = own.flatMap({ URL(string: $0) }).flatMap({ $0.host != nil ? $0 : nil }) ?? yandexDocForPeer else {
+                testHint = "Узел недоступен, а ссылки на документ в профиле нет."
+                return
+            }
+            testHint = "Узел недоступен — сначала проверка Яндекса для этого телефона."
+            captchaTask = CaptchaTask(url: doc)
         }
     }
 
