@@ -1049,7 +1049,20 @@ struct ProfileEditorView: View {
             }
         }
         if let s = cfg.secret, !s.isEmpty {
-            if transport == .direct { encryptionKey = s } else { directKey = s }
+            // В какой слот класть секрет — как в ShareImporter.build: без
+            // прямого канала секрет это ключ ОСНОВНОГО транспорта (его читает
+            // старт), поэтому он идёт в encryptionKey. Если в ссылке есть
+            // direct-канал, секрет относится к нему (directKey; у доков с ним
+            // общий контекст). Профиль direct держит ключ в основном слоте.
+            // Раньше для любого недирект-транспорта секрет молча уезжал в
+            // directKey, и у классической зашифрованной ссылки главный ключ
+            // оставался пустым — «ключ не попадает в конфиг» при скане QR.
+            let hasDirect = !(cfg.directDial ?? "").isEmpty
+            if transport == .direct || !hasDirect {
+                encryptionKey = s
+            } else {
+                directKey = s
+            }
         }
         if let d = cfg.directDial, transport != .direct {
             nodeAddr = d
