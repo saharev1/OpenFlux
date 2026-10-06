@@ -188,6 +188,10 @@ private struct CaptchaWebView: UIViewRepresentable {
             }
         }
         let web = WKWebView(frame: .zero, configuration: cfg)
+        // SmartCaptcha привязана к User-Agent: ядро ходит в Яндекс с этим UA
+        // (volgaUserAgent, core/transport/yandex/vyandex.go), поэтому и капчу
+        // надо проходить им же — иначе куки на UA Safari ядром не принимаются и
+        // Яндекс сразу отдаёт капчу снова. Держать строку в точности как в ядре.
         web.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:153.0) Gecko/20100101 Firefox/153.0"
         web.navigationDelegate = context.coordinator
         model.webView = web
