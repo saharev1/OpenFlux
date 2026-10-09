@@ -24,6 +24,16 @@ struct Profile: Identifiable, Codable, Equatable {
     /// OpenFluxStartSessionPacketTunnel — как отдаёт OpenFluxShareDecode.
     var sessionSpecs: String?
 
+    /// Режим без сервера (phpbox): выход — PHP-нода на обычном веб-хостинге,
+    /// клиент говорит с ней потоками через комнату cups.online или документ
+    /// Mail.ru (`url`). Только TCP на 80/443, без ключа и без сессии.
+    var stream: Bool?
+    /// Сайт ноды на хостинге (https://…), чтобы будить её перед подключением.
+    /// Ключ доступа ноды — секрет, он лежит в Keychain (Secrets.phpToken).
+    var phpSite: String?
+
+    var isStream: Bool { stream == true }
+
     var transportKind: TransportKind { TransportKind(rawValue: transport) ?? .yandex }
 
     var isValid: Bool {
@@ -36,6 +46,10 @@ struct Profile: Identifiable, Codable, Equatable {
     /// One-line subtitle for the dropdown row.
     var subtitle: String {
         if transport == TransportKind.max.rawValue { return "MAX token" }
+        if isStream, let site = phpSite, !site.isEmpty {
+            return "Без сервера · " + site.replacingOccurrences(of: "https://", with: "")
+                .replacingOccurrences(of: "http://", with: "")
+        }
         return url
     }
 }

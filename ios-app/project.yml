@@ -8,7 +8,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "1.2.0"
-    CURRENT_PROJECT_VERSION: "93"
+    CURRENT_PROJECT_VERSION: "94"
     DEVELOPMENT_TEAM: "8GQH8GQ252"
 
 targets:

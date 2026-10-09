@@ -97,6 +97,43 @@ enum Secrets {
 
     private static let directKeyService = "openflux.directkey"
 
+    // MARK: - Ключ доступа PHP-ноды (режим без сервера)
+    //
+    // Им охраняются страницы ноды на хостинге (…?k=ключ): кто его знает, тот
+    // может её остановить или увидеть журнал. В ссылку для других устройств он
+    // не попадает, в профиль (UserDefaults) — тоже.
+
+    private static let phpTokenService = "openflux.phptoken"
+
+    static func phpToken(for profileID: UUID) -> String? {
+        var q = slotQuery(phpTokenService, profileID)
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data, let s = String(data: data, encoding: .utf8), !s.isEmpty
+        else { return nil }
+        return s
+    }
+
+    @discardableResult
+    static func setPhpToken(_ token: String, for profileID: UUID) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = slotQuery(phpTokenService, profileID)
+        guard !trimmed.isEmpty else {
+            let st = SecItemDelete(q as CFDictionary)
+            return st == errSecSuccess || st == errSecItemNotFound
+        }
+        guard let data = trimmed.data(using: .utf8) else { return false }
+        if SecItemUpdate(q as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess {
+            return true
+        }
+        var add = q
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
     private static func slotQuery(_ service: String, _ profileID: UUID) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,

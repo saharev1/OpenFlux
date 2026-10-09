@@ -130,6 +130,43 @@ final class TunnelController: ObservableObject {
         startPolling()
     }
 
+    /// Режим без сервера: SOCKS5 в процессе приложения поверх потоков PHP-ноды
+    /// (cups.online-комната или документ Mail.ru). Ключа нет. Нужен мастеру
+    /// «Без сервера» для проверки ноды и локальному прокси stream-профиля.
+    @discardableResult
+    func startStream(transport: TransportKind, url: String, port: Int) -> Bool {
+        guard !running else { return false }
+        let addr = "127.0.0.1:\(port)"
+        socksAddr = addr
+        let rc = transport.rawValue.withCString { tt in
+            url.withCString { u in
+                addr.withCString { a in
+                    OpenFluxStartStreamClient(UnsafeMutablePointer(mutating: tt),
+                                              UnsafeMutablePointer(mutating: u),
+                                              UnsafeMutablePointer(mutating: a))
+                }
+            }
+        }
+        appendLog(rc == 0 ? "[app] stream client on \(addr) via \(transport.title)"
+                          : "[app] stream start failed (code \(rc))")
+        running = OpenFluxIsRunning() != 0
+        startPolling()
+        return rc == 0
+    }
+
+    /// Запускает локальный прокси профиля в его режиме: stream, session или
+    /// классический одиночный транспорт.
+    func start(profile p: Profile, port: Int) {
+        if p.isStream {
+            startStream(transport: p.transportKind, url: p.url, port: port)
+        } else if p.negotiate == true, let specs = p.sessionSpecs {
+            startSession(specs: specs, secret: Secrets.encryptionKey(for: p.id) ?? "", port: port)
+        } else {
+            start(transport: p.transportKind, url: p.url, maxToken: p.maxToken, maxUid: p.maxUid,
+                  port: port, encryptionKey: Secrets.encryptionKey(for: p.id) ?? "")
+        }
+    }
+
     func stop() {
         OpenFluxStop()
         running = false

@@ -24,7 +24,11 @@ struct ShareConfig: Decodable {
     let codec: String?
     let secret: String?
     let context: String?
+    /// "stream" — режим без сервера (PHP-нода на хостинге), share.ModeStream.
+    let mode: String?
     let transports: [Transport]
+
+    var isStream: Bool { mode == "stream" }
 
     /// The carrier this app should actually run: the highest-priority one we
     /// support. `direct` is skipped here — we carry it separately as the
@@ -128,6 +132,22 @@ enum ShareImporter {
         return out
     }
 
+    /// Stream-ссылка (режим без сервера) -> один профиль: носитель cups.online
+    /// или Mail.ru и его адрес. Ключа нет (у PHP-ноды его не бывает), сайта и
+    /// ключа доступа ноды в ссылке тоже нет — разбудить ноду сможет только
+    /// устройство, которое её ставило; остальные подключаются к работающей.
+    static func buildStream(from cfg: ShareConfig) -> Imported {
+        let t = cfg.transports.first { $0.type == "cupsonline" || $0.type == "mailru" }
+        let kind = t.flatMap { TransportKind(rawValue: $0.type) } ?? .cupsonline
+        var p = Profile(name: cfg.name ?? "Без сервера · \(kind.title)",
+                        transport: kind.rawValue,
+                        url: (t?.url ?? "").trimmingCharacters(in: .whitespaces))
+        p.stream = true
+        var out = Imported(profiles: [p], secrets: [:])
+        out.secrets[p.id] = (main: "", direct: "")
+        return out
+    }
+
     /// Записывает профили и их секреты. Секреты идут в Keychain, а не в профиль:
     /// сам профиль лежит в UserDefaults открытым текстом.
     @MainActor
@@ -191,6 +211,16 @@ enum ShareLink {
         let directSecret = Secrets.directKey(for: p.id) ?? ""
         let dial = (p.nodeAddr ?? "").trimmingCharacters(in: .whitespaces)
 
+        // Режим без сервера: один носитель и "mode":"stream", без секрета.
+        if p.isStream {
+            let u = p.url.trimmingCharacters(in: .whitespaces)
+            guard !u.isEmpty else { return nil }
+            cfg["mode"] = "stream"
+            transports.append(["type": p.transportKind.rawValue, "url": u])
+            cfg["transports"] = transports
+            return encodeConfig(cfg)
+        }
+
         switch p.transportKind {
         case .max:
             return nil  // токен MAX принадлежит аккаунту узла, делиться им нельзя
@@ -234,6 +264,11 @@ enum ShareLink {
             if (cfg["secret"] as? String)?.isEmpty ?? true { return nil }
         }
         cfg["transports"] = transports
+        return encodeConfig(cfg)
+    }
+
+    /// Отдаёт конфиг ядру (share.Make): оно проверяет его и собирает ссылку.
+    private static func encodeConfig(_ cfg: [String: Any]) -> String? {
         guard let data = try? JSONSerialization.data(withJSONObject: cfg),
               let json = String(data: data, encoding: .utf8),
               let c = json.withCString({ OpenFluxShareEncode(UnsafeMutablePointer(mutating: $0)) })

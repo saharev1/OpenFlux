@@ -30,7 +30,7 @@ final class VPNController: ObservableObject {
                dns: String, tunnelUDP: Bool, split: String = "",
                directDomains: String = "", profileID: UUID? = nil,
                keySlot: String = "", onDemand: Bool = true, nodeAddr: String = "",
-               session: String = "") {
+               session: String = "", stream: Bool = false) {
         Task {
             let m = manager ?? NETunnelProviderManager()
             let proto = NETunnelProviderProtocol()
@@ -54,6 +54,8 @@ final class VPNController: ObservableObject {
                 // Готовый specs negotiate-профиля ({context,transports}). Не
                 // пусто = звать OpenFluxStartSessionPacketTunnel с этим и ключом.
                 "session": session,
+                // "1" = режим без сервера: OpenFluxStartStreamPacketTunnel.
+                "stream": stream ? "1" : "0",
             ]
             m.protocolConfiguration = proto
             m.localizedDescription = "OpenFlux"

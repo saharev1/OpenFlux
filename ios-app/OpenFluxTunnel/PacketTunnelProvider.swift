@@ -131,6 +131,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // specs negotiate-профиля от ядра. Не пусто = session-старт (контекст и
         // носители внутри), а не классический одиночный.
         let session = (conf["session"] as? String) ?? ""
+        // Режим без сервера: выход — PHP-нода на хостинге, говорим с ней
+        // потоками (OpenFluxStartStreamPacketTunnel). DNS ядро отвечает само,
+        // фейковыми адресами, а имя открывается на выходе — DoT и GeoSite-
+        // разметка DNS-ответов здесь не участвуют.
+        let stream = (conf["stream"] as? String) == "1"
         let maxToken = (conf["maxToken"] as? String) ?? ""
         let maxUid = (conf["maxUid"] as? String) ?? ""
         let dnsSpec = (conf["dns"] as? String) ?? ""
@@ -229,7 +234,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         settings.mtu = 1500
         // A benign in-tunnel DNS address: queries to it are captured and
         // answered locally over DoT (the real resolvers are excluded above).
-        let dns = NEDNSSettings(servers: ["198.18.0.1"])
+        // В stream-режиме адрес DNS — вне пула фейковых адресов ядра
+        // (198.18.0.1… раздаются именам), чтобы одно не путалось с другим.
+        let dns = NEDNSSettings(servers: [stream ? "198.18.255.254" : "198.18.0.1"])
         dns.matchDomains = [""]
         settings.dnsSettings = dns
         self.netSettings = settings
@@ -257,7 +264,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             geoLines.append(list)
         }
         if !customDirect.isEmpty { geoLines.append(customDirect) }
-        self.geoSiteActive = !geoLines.isEmpty
+        // В stream-режиме DNS-ответы фейковые и через DNS-прокси ядра не идут —
+        // размечать нечего, монитор только зря крутился бы.
+        self.geoSiteActive = !stream && !geoLines.isEmpty
         if self.geoSiteActive {
             let merged = geoLines.joined(separator: "\n")
             merged.withCString { OpenFluxSetGeositeDirect(UnsafeMutablePointer(mutating: $0)) }
@@ -269,7 +278,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             let rc: Int32
-            if !session.isEmpty {
+            if stream {
+                rc = transport.withCString { tt in
+                    url.withCString { u in
+                        OpenFluxStartStreamPacketTunnel(
+                            UnsafeMutablePointer(mutating: tt),
+                            UnsafeMutablePointer(mutating: u))
+                    }
+                }
+            } else if !session.isEmpty {
                 // Session-профиль: specs (с контекстом и носителями) + ключ из
                 // основного слота. Контекст берётся из specs, поэтому совпадает
                 // с узлом (в отличие от классического, где он деривится из URL).
