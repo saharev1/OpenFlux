@@ -1,6 +1,7 @@
 package io.openflux.ios
 
 import io.openflux.app.platform.BrowserPage
+import io.openflux.desktop.model.AccountKind
 import io.openflux.desktop.model.CaptchaPrompt
 import io.openflux.desktop.model.ConnectionMode
 import io.openflux.desktop.model.ConnectionState
@@ -10,6 +11,7 @@ import io.openflux.desktop.model.LogLine
 import io.openflux.desktop.model.Profile
 import io.openflux.desktop.model.TrafficStats
 import io.openflux.desktop.model.TransportType
+import io.openflux.desktop.service.Accounts
 import io.openflux.desktop.service.ConnectionService
 import io.openflux.desktop.service.ProfileRepository
 import io.openflux.desktop.service.SettingsRepository
@@ -61,15 +63,16 @@ import platform.NetworkExtension.NEVPNStatusReasserting
 /**
  * The shared UI's connection on iOS. The core runs in the packet-tunnel
  * extension (the same one the Swift UI starts), so this does what the Swift
- * VPNController does: write the profile's secret to the shared Keychain, put
- * what the extension needs into the VPN profile's providerConfiguration, start
- * it, and follow it — the system's VPN status for the state, the extension's
- * "log" IPC for the journal.
+ * VPNController does: write the profile's secret (and the Yandex sign-in's
+ * cookies) to the shared Keychain, put what the extension needs into the VPN
+ * profile's providerConfiguration, start it, and follow it — the system's VPN
+ * status for the state, the extension's "log" IPC for the journal.
  */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 class IosConnectionService(
     private val profiles: ProfileRepository,
     private val settings: SettingsRepository,
+    private val accounts: Accounts,
 ) : ConnectionService {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -130,6 +133,9 @@ class IosConnectionService(
         if (!profile.stream && !SharedKeychain.setSecret(uuid, profile.secret)) {
             note("Не удалось сохранить ключ в Keychain", LogLevel.Error)
         }
+        if (!SharedKeychain.setYandexSignIn(yandexSignIn(profile))) {
+            note("Не удалось сохранить вход в Яндекс в Keychain", LogLevel.Error)
+        }
         val conf = providerConfiguration(profile, uuid)
         scope.launch {
             try {
@@ -173,6 +179,19 @@ class IosConnectionService(
                 fail(profile, e.message ?: "VPN не запустился")
             }
         }
+    }
+
+    /**
+     * The Yandex sign-in's cookies for the profile, or none. The core gives them to all its Yandex
+     * carriers (OpenFluxSetInitialCookies), the board included. A board must be joined as a guest,
+     * so a profile with a board gets none.
+     */
+    private fun yandexSignIn(p: Profile): Map<String, String> {
+        if (!settings.settings.value.useAccountSessions) return emptyMap()
+        val kind = AccountKind.Yandex
+        val types = p.carriers.map { it.type }
+        if (types.none { it in kind.signedInTransports } || TransportType.BOARDS in types) return emptyMap()
+        return accounts.validSession(kind)?.cookies.orEmpty()
     }
 
     private fun isUp(s: NEVPNStatus) =

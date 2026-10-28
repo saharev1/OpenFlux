@@ -1,15 +1,22 @@
 package io.openflux.ios
 
+import io.openflux.desktop.model.AccountKind
+import io.openflux.desktop.model.AccountSession
 import io.openflux.desktop.model.AppSettings
 import io.openflux.desktop.model.Profile
+import io.openflux.desktop.service.AccountRepository
 import io.openflux.desktop.service.ProfileRepository
 import io.openflux.desktop.service.SettingsRepository
+import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import platform.Foundation.NSLock
 import platform.Foundation.NSUUID
 import platform.Foundation.NSUserDefaults
+import platform.Security.kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
 private val storeJson = Json { ignoreUnknownKeys = true; encodeDefaults = false }
 
@@ -40,6 +47,47 @@ class DefaultsProfiles(private val defaults: NSUserDefaults = NSUserDefaults.sta
     override fun delete(id: String) = save(_profiles.value.filterNot { it.id == id })
 
     override fun newId(): String = NSUUID().UUIDString()
+}
+
+/**
+ * The Services screen's sign-ins, as JSON in the Keychain. A session is a
+ * login, so it stays out of the defaults and is never restored to another
+ * device. The UI and the background checks both save sessions, one write at a time.
+ */
+@OptIn(ExperimentalForeignApi::class)
+class KeychainAccounts : AccountRepository {
+    private val service = "openflux.accounts"
+    private val account = "sessions"
+    private val lock = NSLock()
+    private val _sessions = MutableStateFlow(load())
+    override val sessions: StateFlow<Map<AccountKind, AccountSession>> = _sessions
+
+    private fun load(): Map<AccountKind, AccountSession> {
+        val stored = Keychain.read(service, account, group = null) ?: return emptyMap()
+        // A session this build cannot read (a service it does not know) is skipped; the others still load.
+        val items = runCatching { storeJson.parseToJsonElement(stored).jsonArray }.getOrNull().orEmpty()
+        return items.mapNotNull { runCatching { storeJson.decodeFromJsonElement(AccountSession.serializer(), it) }.getOrNull() }
+            .associateBy { it.kind }
+    }
+
+    private fun update(transform: (Map<AccountKind, AccountSession>) -> Map<AccountKind, AccountSession>) {
+        lock.lock()
+        try {
+            val next = transform(_sessions.value)
+            val json = storeJson.encodeToString(ListSerializer(AccountSession.serializer()), next.values.toList())
+            // As the desktop's file: a failed write is an error, and the sessions stay as stored.
+            check(Keychain.write(service, account, json, group = null, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)) {
+                "Не удалось сохранить вход в Keychain"
+            }
+            _sessions.value = next
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    override fun save(session: AccountSession) = update { it + (session.kind to session) }
+
+    override fun remove(kind: AccountKind) = update { it - kind }
 }
 
 class DefaultsSettings(private val defaults: NSUserDefaults = NSUserDefaults.standardUserDefaults) : SettingsRepository {

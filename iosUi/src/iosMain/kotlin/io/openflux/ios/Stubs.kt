@@ -22,14 +22,7 @@ import io.openflux.desktop.model.ShareLinkCodec
 import io.openflux.desktop.model.SshTarget
 import io.openflux.desktop.model.TrafficStats
 import io.openflux.desktop.model.YandexDocument
-import io.openflux.desktop.model.AccountKind
-import io.openflux.desktop.model.AccountSession
-import io.openflux.desktop.service.AccountBrowser
-import io.openflux.desktop.service.AccountException
-import io.openflux.desktop.service.AccountRepository
 import io.openflux.desktop.service.ConnectionService
-import io.openflux.desktop.service.ProbeResult
-import io.openflux.desktop.service.SessionProbe
 import io.openflux.desktop.service.NodeWizardService
 import io.openflux.desktop.service.PlatformKind
 import io.openflux.desktop.service.PlatformServices
@@ -114,32 +107,4 @@ class NoNodeWizard : NodeWizardService {
     override fun clearLogs() { logs.value = emptyList() }
     override fun note(text: String, level: LogLevel) = Unit
     override fun close() = Unit
-}
-
-
-// Accounts (sign-in to Yandex / Mail.ru in a built-in browser): sessions kept
-// in memory; the browser comes with the WKWebView step.
-
-class InMemoryAccountRepository : AccountRepository {
-    private val _sessions = MutableStateFlow<Map<AccountKind, AccountSession>>(emptyMap())
-    override val sessions: StateFlow<Map<AccountKind, AccountSession>> = _sessions
-    override fun save(session: AccountSession) { _sessions.value = _sessions.value + (session.kind to session) }
-    override fun remove(kind: AccountKind) { _sessions.value = _sessions.value - kind }
-}
-
-class NoAccountBrowser : AccountBrowser {
-    override val page: StateFlow<BrowserPage?> = MutableStateFlow(null)
-    override val url: String = ""
-    override val loading: Boolean = false
-    override val closed: Boolean = true
-    override suspend fun open(kind: AccountKind, url: String, cookies: Map<String, String>, onStep: (String) -> Unit) =
-        throw AccountException("Вход в аккаунт на iOS ещё не подключён")
-    override suspend fun evaluate(script: String): String = ""
-    override fun load(url: String) = Unit
-    override suspend fun cookies(kind: AccountKind): Map<String, String> = emptyMap()
-    override fun close() = Unit
-}
-
-object OfflineSessionProbe : SessionProbe {
-    override suspend fun probe(kind: AccountKind, cookies: Map<String, String>): ProbeResult = ProbeResult.NeedsCheck
 }

@@ -196,7 +196,7 @@ class IosNodeWizard : NodeWizardService {
         out
     }
 
-    /** No built-in browser on iOS yet: the wizard's document step is made on a computer. */
+    /** The wizard's document step is not wired up on iOS yet: it is made on a computer. */
     override suspend fun createDocument(fileName: String, onStep: (String) -> Unit): YandexDocument =
         throw NodeWizardException("Документ Яндекса с iPhone пока не создаётся: выберите каналы без документа (прямое подключение, cups.online) или создайте документ на компьютере")
 

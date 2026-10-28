@@ -25,9 +25,9 @@ fun MainViewController(): UIViewController {
     // No subscription, bot or OpenFlux sign-in here (AppContainer's No* defaults):
     // buying inside an iOS app must go through Apple, so the app only connects.
     val accounts = Accounts(
-        repo = InMemoryAccountRepository(),
-        browser = NoAccountBrowser(),
-        probe = OfflineSessionProbe,
+        repo = KeychainAccounts(),
+        browser = IosAccountBrowser(),
+        probe = IosSessionProbe(),
         now = platform::now,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     )
@@ -44,7 +44,7 @@ fun MainViewController(): UIViewController {
         profiles = profiles,
         settings = settings,
         // A "без сервера" profile first asks its node on the hosting to run (as on the desktop).
-        connection = NodeKeepingConnection(IosConnectionService(profiles, settings), phpHosting, scope),
+        connection = NodeKeepingConnection(IosConnectionService(profiles, settings, accounts), phpHosting, scope),
         platform = platform,
         shareCodec = codec,
         nodeWizard = IosNodeWizard(),
@@ -52,6 +52,6 @@ fun MainViewController(): UIViewController {
         phpHosting = phpHosting,
     )
     return ComposeUIViewController {
-        OpenFluxApp(container, NoScrollbars, remember { Shortcuts() })
+        OpenFluxApp(container, NoScrollbars, remember { Shortcuts() }, IosBrowserViews)
     }
 }
