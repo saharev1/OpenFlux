@@ -91,6 +91,13 @@ final class DeviceTests: XCTestCase {
         guard j.waitForExistence(timeout: 5) else { note("\(tag) journal", "no journal row"); return "" }
         j.tap()
         sleep(2)
+        // OFX_GREP: only the lines with this text (the journal's own search).
+        if let grep = env["OFX_GREP"], !grep.isEmpty {
+            let p = NSPredicate(format: "label == 'Поиск в журнале'")
+            if let f = (app.textViews.matching(p).allElementsBoundByIndex + app.textFields.matching(p).allElementsBoundByIndex).first(where: { $0.isHittable }) {
+                f.tap(); sleep(1); app.typeText(grep); sleep(2)
+            }
+        }
         var pages: [String] = []
         var peak = 0.0
         var kills = 0
@@ -306,5 +313,51 @@ final class DeviceTests: XCTestCase {
         sleep(2)
         note("servers", app.debugDescription)
         shot("servers")
+    }
+
+    /// A step-by-step drive: OFX_STEPS "|"-separated, each a label prefix to tap
+    /// ("tab:Серверы" for the tab bar, "type:<label>=<text>" to type into a field,
+    /// "wait:<s>", "up"/"down" to swipe); the screen is dumped after each.
+    func testSteps() {
+        app.launch()
+        sleep(3)
+        let steps = (env["OFX_STEPS"] ?? "").split(separator: "|").map(String.init)
+        for (i, step) in steps.enumerated() {
+            if step.hasPrefix("wait:") { sleep(UInt32(step.dropFirst(5)) ?? 5) }
+            else if step == "up" { app.swipeUp() }
+            else if step == "down" { app.swipeDown() }
+            else if step.hasPrefix("secret:") {
+                // The SSH password comes in OFX_SECRET, never in the steps (they are logged).
+                let p = NSPredicate(format: "label == %@", String(step.dropFirst(7)))
+                let f = (app.textViews.matching(p).allElementsBoundByIndex + app.textFields.matching(p).allElementsBoundByIndex
+                    + app.secureTextFields.matching(p).allElementsBoundByIndex).first { $0.isHittable }
+                f?.tap(); sleep(1)
+                app.typeText(env["OFX_SECRET"] ?? "")
+            }
+            else if step.hasPrefix("type:") {
+                let kv = step.dropFirst(5).split(separator: "=", maxSplits: 1).map(String.init)
+                let p = NSPredicate(format: "label == %@", kv[0])
+                let f = (app.textViews.matching(p).allElementsBoundByIndex + app.textFields.matching(p).allElementsBoundByIndex).first { $0.isHittable }
+                f?.tap(); sleep(1)
+                app.typeText(kv.count > 1 ? kv[1] : "")
+            } else {
+                let label = step.hasPrefix("tab:") ? String(step.dropFirst(4)) : step
+                let e = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).allElementsBoundByIndex.first { $0.isHittable }
+                    ?? app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", label)).allElementsBoundByIndex.first { $0.isHittable }
+                if let e = e { e.tap() } else { note("step \(i) missing", label) }
+            }
+            sleep(UInt32(env["OFX_STEP_WAIT"] ?? "") ?? 3)
+            // From one snapshot: walking the elements one by one races a screen that changes.
+            let labels = app.debugDescription.split(separator: "\n").compactMap { l -> String? in
+                guard let r = l.range(of: "label: '") else { return nil }
+                let kind = l.trimmingCharacters(in: .whitespaces).split(separator: ",").first.map(String.init) ?? ""
+                let rest = l[r.upperBound...]
+                let text = rest.range(of: "'", options: .backwards).map { String(rest[..<$0.lowerBound]) } ?? String(rest)
+                return "\(kind) \(text)\(l.contains("Selected") ? " [selected]" : "")"
+            }
+            var seen = Set<String>()
+            note("step \(i) \(step)", labels.filter { seen.insert($0).inserted }.joined(separator: "\n"))
+            shot("step \(i)")
+        }
     }
 }
