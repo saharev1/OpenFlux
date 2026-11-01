@@ -7,6 +7,7 @@ import XCTest
 ///   OFX_PROFILES  connection rows to try, by their full label, "|"-separated
 ///   OFX_HOLD      seconds to keep each connection up and watch it (default 30)
 ///   OFX_MB        megabytes to download for the speed (default 5)
+///   OFX_KB        kilobytes instead, for the slow document carriers
 final class DeviceTests: XCTestCase {
     let app = XCUIApplication(bundleIdentifier: "com.p1neapplexpress-saharev.openflux")
     var env: [String: String] { ProcessInfo.processInfo.environment }
@@ -155,8 +156,9 @@ final class DeviceTests: XCTestCase {
         lines.append("exit IP: \(ip.flatMap { String(data: $0, encoding: .utf8) } ?? "-") (\(String(format: "%.1f", tIP)) s\(eIP.map { ", " + $0 } ?? ""))")
         let (_, tTG, eTG) = fetch("https://telegram.org", timeout: 20)
         lines.append("telegram.org: \(eTG ?? "ok") \(String(format: "%.1f", tTG)) s")
-        let mb = Int(env["OFX_MB"] ?? "") ?? 5
-        let (d, t, e) = fetch("https://speed.cloudflare.com/__down?bytes=\(mb * 1_000_000)", timeout: 90)
+        // OFX_KB: a small download for the slow document carriers, where a megabyte only times out.
+        let bytes = Int(env["OFX_KB"] ?? "").map { $0 * 1000 } ?? (Int(env["OFX_MB"] ?? "") ?? 5) * 1_000_000
+        let (d, t, e) = fetch("https://speed.cloudflare.com/__down?bytes=\(bytes)", timeout: 90)
         let got = d?.count ?? 0
         lines.append(String(format: "download: %d B in %.1f s = %.0f KB/s%@", got, t, Double(got) / 1024 / max(t, 0.01), e.map { ", " + $0 } ?? ""))
         let text = lines.joined(separator: "\n")
@@ -318,12 +320,25 @@ final class DeviceTests: XCTestCase {
     /// A step-by-step drive: OFX_STEPS "|"-separated, each a label prefix to tap
     /// ("tab:Серверы" for the tab bar, "type:<label>=<text>" to type into a field,
     /// "wait:<s>", "up"/"down" to swipe); the screen is dumped after each.
+    /// "label#2" → ("label", 2); a plain label is the first.
+    private func nth(_ s: String) -> (String, Int) {
+        guard let h = s.lastIndex(of: "#"), let n = Int(s[s.index(after: h)...]), n > 0 else { return (s, 1) }
+        return (String(s[..<h]), n)
+    }
+
     func testSteps() {
         app.launch()
         sleep(3)
         let steps = (env["OFX_STEPS"] ?? "").split(separator: "|").map(String.init)
         for (i, step) in steps.enumerated() {
             if step.hasPrefix("wait:") { sleep(UInt32(step.dropFirst(5)) ?? 5) }
+            else if step.hasPrefix("gone:") {
+                // "gone:Отмена=600": while a person signs in by hand, until the sign-in window closes.
+                let kv = step.dropFirst(5).split(separator: "=", maxSplits: 1).map(String.init)
+                let end = Date().addingTimeInterval(TimeInterval(kv.count > 1 ? Int(kv[1]) ?? 300 : 300))
+                let p = NSPredicate(format: "label BEGINSWITH %@", kv[0])
+                while Date() < end && app.buttons.matching(p).firstMatch.exists { sleep(2) }
+            }
             else if step == "up" { app.swipeUp() }
             else if step == "down" { app.swipeDown() }
             else if step.hasPrefix("secret:") {
@@ -335,16 +350,27 @@ final class DeviceTests: XCTestCase {
                 app.typeText(env["OFX_SECRET"] ?? "")
             }
             else if step.hasPrefix("type:") {
+                // "type:Приоритет#3=120": the third such field on screen, its old text cleared first.
                 let kv = step.dropFirst(5).split(separator: "=", maxSplits: 1).map(String.init)
-                let p = NSPredicate(format: "label == %@", kv[0])
-                let f = (app.textViews.matching(p).allElementsBoundByIndex + app.textFields.matching(p).allElementsBoundByIndex).first { $0.isHittable }
-                f?.tap(); sleep(1)
-                app.typeText(kv.count > 1 ? kv[1] : "")
+                let (label, n) = nth(kv[0])
+                let p = NSPredicate(format: "label == %@", label)
+                let fs = (app.textViews.matching(p).allElementsBoundByIndex + app.textFields.matching(p).allElementsBoundByIndex)
+                    .filter { $0.isHittable }.sorted { $0.frame.minY < $1.frame.minY }
+                if fs.count >= n {
+                    let f = fs[n - 1]
+                    f.tap(); sleep(1)
+                    let old = (f.value as? String) ?? ""
+                    app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: old.count))
+                    app.typeText(kv.count > 1 ? kv[1] : "")
+                } else { note("step \(i) missing", kv[0]) }
             } else {
-                let label = step.hasPrefix("tab:") ? String(step.dropFirst(4)) : step
-                let e = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).allElementsBoundByIndex.first { $0.isHittable }
-                    ?? app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", label)).allElementsBoundByIndex.first { $0.isHittable }
-                if let e = e { e.tap() } else { note("step \(i) missing", label) }
+                // "Убрать транспорт#2": the second hittable match from the top.
+                let (label, n) = nth(step.hasPrefix("tab:") ? String(step.dropFirst(4)) : step)
+                let p = NSPredicate(format: "label BEGINSWITH %@", label)
+                var es = app.buttons.matching(p).allElementsBoundByIndex.filter { $0.isHittable }
+                if es.isEmpty { es = app.descendants(matching: .any).matching(p).allElementsBoundByIndex.filter { $0.isHittable } }
+                es.sort { $0.frame.minY < $1.frame.minY }
+                if es.count >= n { es[n - 1].tap() } else { note("step \(i) missing", label) }
             }
             sleep(UInt32(env["OFX_STEP_WAIT"] ?? "") ?? 3)
             // From one snapshot: walking the elements one by one races a screen that changes.
